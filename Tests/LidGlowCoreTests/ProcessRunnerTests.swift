@@ -22,7 +22,7 @@ final class ProcessRunnerChecks {
     return env
   }
   private func run(
-    _ script: String, timeout: TimeInterval = 2, cap: Int = 65536,
+    _ script: String, timeout: TimeInterval = 10, cap: Int = 65536,
     cancelled: @escaping @Sendable () -> Bool = { false }
   ) -> ProcessRunResult {
     ProcessRunner.run(
@@ -30,6 +30,9 @@ final class ProcessRunnerChecks {
       environment: environment, timeout: timeout, maxOutputBytes: cap, cancelled: cancelled)
   }
   func successAndNonzero() {
+    // A cold system Python launch can take several seconds on hosted Macs.
+    // Functional cases use the production timeout; deadline cases below pass
+    // their own short limit and continue to verify bounded termination.
     let success = run("print('{\"ok\":true}')")
     Check.equal(success.status, 0)
     Check.equal(String(data: success.output, encoding: .utf8), "{\"ok\":true}\n")
