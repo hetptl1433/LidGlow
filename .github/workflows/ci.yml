@@ -1,0 +1,41 @@
+name: macOS checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      CLANG_MODULE_CACHE_PATH: ${{ github.workspace }}/.build/module-cache
+      SWIFTPM_MODULECACHE_OVERRIDE: ${{ github.workspace }}/.build/module-cache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Show compiler and Python versions
+        run: |
+          swift --version
+          /usr/bin/python3 --version
+          mkdir -p .build/module-cache
+      - name: Run pure core checks
+        run: swift run -debug-info-format none --scratch-path .build --cache-path .build/cache --config-path .build/config --security-path .build/security --disable-sandbox LidGlowChecks
+      - name: Build native signal writer
+        run: swift build -c release --product LidGlowSignal -debug-info-format none --scratch-path .build --cache-path .build/cache --config-path .build/config --security-path .build/security --disable-sandbox
+      - name: Run production app-model startup and settings regressions
+        run: swift run -debug-info-format none --scratch-path .build --cache-path .build/cache --config-path .build/config --security-path .build/security --disable-sandbox LidGlowAppChecks
+      - name: Test isolated hook management and native signals
+        run: LIDGLOW_SIGNAL_BINARY="$PWD/.build/release/LidGlowSignal" /usr/bin/python3 -m unittest discover -s Tests -p 'test_hooks.py' -v
+      - name: Build and verify native app
+        run: ./scripts/build.sh "$RUNNER_TEMP/lidglow-dist"
+      - name: Confirm source files were not changed
+        run: git diff --exit-code

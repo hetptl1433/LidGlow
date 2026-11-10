@@ -1,0 +1,18 @@
+# Hardware interface sources
+
+Hardware research verified on 10 November 2026. LidGlow's hardware support is experimental and requires an unsandboxed macOS app. A successful private-API call is only an acknowledgement; LidGlow also reads the mode and fade factor and releases control if output stops responding.
+
+- [Apple: About the illuminated Apple logo on MacBook Pro with PROLED XDR Display](https://support.apple.com/en-us/149248). Official behavior and documented on/off preference. We do not run its administrator commands.
+- [Ark0N/LogoLight: LightEmitter.swift](https://github.com/Ark0N/LogoLight/blob/7018b92503f936cfc5956bef4a74cb730078a9d5/Sources/LogoLightCore/LightEmitter.swift) and [measured CoreBrightness notes](https://github.com/Ark0N/LogoLight/blob/7018b92503f936cfc5956bef4a74cb730078a9d5/docs/corebrightnessd.md). The CoreBrightness Objective-C signatures, fade/hold technique, measured spring coefficient, keyboard correction, and automatic-duration restoration in `LogoHardware.swift` are adapted from this MIT-licensed project. Copyright and permission notice are retained in `THIRD_PARTY_NOTICES.md`.
+- [Ark0N/LogoLight: LogoStatusReader.swift](https://github.com/Ark0N/LogoLight/blob/7018b92503f936cfc5956bef4a74cb730078a9d5/Sources/LogoLightCore/LogoStatusReader.swift). Identifies the dedicated logo PWM service and built-in display state used for read-only compatibility checks. Local read-only checks confirmed that `IOServiceNameMatching` needs the registered name `bklb-backlight`; the `@0` shown by `ioreg` is its location suffix.
+- [Backglow developer: Can you change the color of the MacBook Pro logo?](https://backglow.app/macbook-logo-color). The physical logo is a white LED; RGB and arbitrary pixel imagery are not supported.
+
+## Control boundaries
+
+Construction only probes the logo hardware and reads CoreBrightness properties. An explicit lighting choice opts into control, and normal later launches can resume that saved choice. A pending recovery record prevents automatic acquisition. Preview mode never creates the CoreBrightness bridge. No shell commands, privileged helpers, keyboard brightness levels, screen brightness levels, ambient-light restrictions, wake assertions, clamshell overrides, or persistent startup services are used by the hardware wrapper.
+
+Brightness is a factor relative to macOS's automatic ambient/display-dependent output, not an absolute measured lumen or nit value. Active native fades are sampled approximately every 30 ms, so actual brightness can pass the requested factor by one hardware frame. A settled hold or endpoint performs no backend polling. The testable state machine is in `Sources/LidGlowCore/HardwareControl.swift`; the Objective-C wrapper remains in `Sources/LidGlowUI/LogoHardware.swift`. `HardwareRecoveryFile.swift` implements minimal crash recovery and a nonblocking ownership lock. See QA.md for physical measurements and validation limits.
+
+LidGlow saves the previous on/off mode before the first mutation. Release restores automatic fade duration and the current awake/asleep logical state, and briefly verifies mode/factor before claiming restoration. Failure retains a private recovery record for another explicit attempt. A same-user file lock prevents competing LidGlow instances; third-party utilities do not share that lock. A process crash or forced termination can still leave a private daemon fade held until explicit recovery or daemon restart. Restoration is not crash-proof.
+
+The API is undocumented, can change with macOS updates, and is unsuitable for Mac App Store sandbox distribution. LidGlow checks required capabilities and fails closed when they are absent. No unverified brightness-mapping writes are made.
