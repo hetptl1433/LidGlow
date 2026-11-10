@@ -32,6 +32,21 @@
     let description: String
   }
 
+  @MainActor
+  private final class FakeLoginItem: LoginItemManaging {
+    var state: LoginItemState = .off
+    var changes: [Bool] = []
+    var approvalNeeded = false
+    var rejectsChanges = false
+    var settingsOpened = false
+    func setEnabled(_ enabled: Bool) throws {
+      changes.append(enabled)
+      if rejectsChanges { throw CocoaError(.featureUnsupported) }
+      state = enabled ? (approvalNeeded ? .needsApproval : .on) : .off
+    }
+    func openSettings() { settingsOpened = true }
+  }
+
   @main
   @MainActor
   private enum LidGlowAppChecks {
@@ -69,6 +84,8 @@
         "Production model selects concurrent signals and preserves ongoing work", concurrentSignals)
       run("Automation URLs bound input and never acquire preview hardware", automationURLs)
       run("Headless shutdown is idempotent and starts no helper work", repeatedShutdown)
+      run("Simple LidGlow defaults and explicit Off survive relaunch", simpleDefaults)
+      run("Login startup respects opt-out, approval and errors without real registration", loginDefaults)
       print("\(cases) app-model cases · \(assertions) assertions · \(failures) failures")
       exit(failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE)
     }
@@ -180,14 +197,14 @@
     private static func corruptSettings() throws {
       let store = MemorySettings([
         "mode": "not-a-mode", "brightness": Double.nan, "speed": Double.infinity,
-        "minimum": -10.0, "focusMinutes": Double.infinity, "enabled": false,
+        "minimum": -10.0, "focusMinutes": Double.infinity, "enabled": false, "lidGlowEnabled": false,
         "agentPreferences": Data("{broken-json".utf8), "customPattern": "not-a-pattern",
       ])
       let model = makeModel(store)
       defer { model.shutdown() }
       try expect(model.mode == .breathe, "Unknown saved mode did not keep the default")
       try expect(
-        model.brightness == 0.7 && model.speed == 1,
+        model.brightness == 0.7 && model.speed == 1.5,
         "Nonfinite saved lighting values did not fall back")
       try expect(
         model.minimum == 0 && model.focusMinutes == 25, "Saved numeric bounds were not applied")
@@ -336,9 +353,9 @@
       model.handleURL(URL(string: "lidglow://mode?brightness=10")!)
       try expect(model.brightness == 1, "URL brightness escaped its upper bound")
       model.handleURL(URL(string: "lidglow://off")!)
-      try expect(!model.enabled, "Off URL did not switch the preview off")
+      try expect(!model.isLidGlowEnabled, "Off URL did not return to Mac automatic")
       model.handleURL(URL(string: "lidglow://on")!)
-      try expect(model.enabled, "On URL did not switch the preview on")
+      try expect(model.isLidGlowEnabled && model.enabled, "On URL did not enable LidGlow")
       model.focusMinutes = 3
       model.handleURL(URL(string: "lidglow://focus?minutes=nan")!)
       try expect(
@@ -351,6 +368,55 @@
       try expect(
         !model.isControlling && !model.hasPendingShutdownWork,
         "Preview automation acquired hardware or helper work")
+    }
+
+    private static func simpleDefaults() throws {
+      let store = MemorySettings()
+      let model = makeModel(store)
+      try expect(model.mode == .breathe && model.speed == 1.5, "Breathing defaults changed")
+      try expect(model.isLidGlowEnabled && !model.showWelcome, "Default On still needs setup")
+      model.setLidGlowEnabled(false)
+      try expect(!model.isLidGlowEnabled && !store.bool(forKey: "lidGlowEnabled"), "Off did not persist")
+      model.shutdown()
+      let next = makeModel(store)
+      defer { next.shutdown() }
+      try expect(!next.isLidGlowEnabled, "A later launch discarded an explicit Off choice")
+      next.setLidGlowEnabled(true)
+      try expect(next.isLidGlowEnabled && next.enabled && !next.isControlling,
+                 "Preview switch did not enable the effect without hardware")
+      let migrated = makeModel(MemorySettings(["mode": "breathe", "speed": 1.0, "controlsWanted": false]))
+      defer { migrated.shutdown() }
+      try expect(migrated.speed == 1.5 && migrated.isLidGlowEnabled, "Old defaults were not upgraded")
+      let custom = makeModel(MemorySettings(["mode": "breathe", "speed": 1.8]))
+      defer { custom.shutdown() }
+      try expect(custom.speed == 1.8, "Migration discarded a customized speed")
+    }
+
+    private static func loginDefaults() throws {
+      let store = MemorySettings()
+      let login = FakeLoginItem()
+      let model = AppModel(previewOnly: true, settings: store, startServices: false, loginItem: login)
+      defer { model.shutdown() }
+      try expect(login.changes.isEmpty, "Construction registered a login item")
+      model.configureLoginItemIfNeeded()
+      model.configureLoginItemIfNeeded()
+      try expect(login.changes == [true] && model.startAtLogin, "Default login registration repeated")
+      login.state = .off // User disables it in System Settings.
+      model.configureLoginItemIfNeeded()
+      try expect(!model.startAtLogin && login.changes == [true], "Launch overrode a system opt-out")
+      model.setStartAtLogin(true)
+      model.setStartAtLogin(false)
+      try expect(!model.startAtLogin && login.state == .off, "Login Off did not unregister")
+      login.approvalNeeded = true
+      model.setStartAtLogin(true)
+      try expect(model.startAtLogin && model.loginItemMessage != nil, "Approval requirement was hidden")
+      model.openLoginItemSettings()
+      try expect(login.settingsOpened, "Login settings action was not routed")
+      login.state = .off
+      login.rejectsChanges = true
+      model.setStartAtLogin(true)
+      try expect(!model.startAtLogin && model.loginItemMessage != nil, "Registration failure claimed success")
+      try expect(!model.isControlling && !model.hasPendingShutdownWork, "Login tests started real services")
     }
 
     private static func repeatedShutdown() throws {

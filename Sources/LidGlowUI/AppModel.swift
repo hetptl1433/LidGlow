@@ -13,7 +13,7 @@ final class AppModel: ObservableObject {
     }
   }
   @Published var brightness: Double = 0.7 { didSet { save() } }
-  @Published var speed: Double = 1 { didSet { save() } }
+  @Published var speed: Double = 1.5 { didSet { save() } }
   @Published var minimum: Double = 0.06 { didSet { save() } }
   @Published var enabled = true { didSet { save() } }
   // Frame changes belong to a small preview subtree, not the whole settings view.
@@ -83,12 +83,15 @@ final class AppModel: ObservableObject {
   @Published var codexInstalled = false
   @Published var integrationMessage: String?
   @Published var installationBusy = false
+  @Published private(set) var startAtLogin = true
+  @Published private(set) var loginItemMessage: String?
 
   private let hardware: LogoHardware
   private let previewOnly: Bool
   private let settings: SettingsStore
   private let shouldPersistPreferences: Bool
   private let servicesEnabled: Bool
+  private let loginItem: LoginItemManaging?
   private var animationTimer: Timer?
   private var frameInterval: Double?
   private var focusTimer: Timer?
@@ -118,7 +121,7 @@ final class AppModel: ObservableObject {
   private var stopped = false
   private var lastAgentIdentity = ""
   private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
-  private var controlsWanted = false
+  @Published private var controlsWanted = true
   private var didApplyStartupSettings = false
   private var previewVisible: Bool { !visibleSurfaces.isEmpty }
 
@@ -135,18 +138,20 @@ final class AppModel: ObservableObject {
     return "\(Int((level * 100).rounded()))% · \(isCharging ? "Connected to power" : "On battery")"
   }
 
-  init(previewOnly: Bool? = nil, settings: SettingsStore? = nil, startServices: Bool = true) {
+  init(previewOnly: Bool? = nil, settings: SettingsStore? = nil, startServices: Bool = true,
+       loginItem: LoginItemManaging? = nil) {
     let preview = previewOnly ?? CommandLine.arguments.contains("--preview")
     self.previewOnly = preview
     self.settings = settings ?? UserDefaults.standard
     shouldPersistPreferences = settings != nil || !preview
     servicesEnabled = startServices
+    self.loginItem = loginItem ?? (startServices && !preview ? SystemLoginItem() : nil)
     hardware = LogoHardware(
       previewOnly: preview,
       recoveryURL: AppPaths.dataDirectory.appendingPathComponent("hardware-recovery.json"))
     load()
     loading = false
-    showWelcome = !preview && !self.settings.bool(forKey: "hasSeenWelcome")
+    showWelcome = false
     parsePattern()
     hardwareAvailable = hardware.isAvailable
     hardwareStatus = hardware.status
@@ -177,10 +182,48 @@ final class AppModel: ObservableObject {
   func activateSavedLightingIfNeeded() {
     guard !didApplyStartupSettings else { return }
     didApplyStartupSettings = true
-    guard !previewOnly, !showWelcome, settings.bool(forKey: "hasSeenWelcome"), controlsWanted,
+    if !previewOnly { configureLoginItemIfNeeded() }
+    guard !previewOnly, controlsWanted,
       !hardware.hasPendingRecovery
     else { return }
     connectHardware()
+  }
+  var isLidGlowEnabled: Bool { controlsWanted && !needsLightingReset }
+  func setLidGlowEnabled(_ on: Bool) {
+    if on {
+      if hardwareAvailable { setLogoPower(true) }
+      else {
+        controlsWanted = true
+        enabled = true
+        save()
+      }
+    } else { useSystemLighting() }
+  }
+
+  func configureLoginItemIfNeeded() {
+    guard loginItem != nil else { return }
+    if !settings.bool(forKey: "loginItemConfigured") {
+      setStartAtLogin(true)
+      settings.set(true, forKey: "loginItemConfigured")
+    } else { refreshLoginItem() }
+  }
+  func setStartAtLogin(_ on: Bool) {
+    guard let loginItem else { return }
+    do {
+      try loginItem.setEnabled(on)
+      refreshLoginItem()
+    } catch {
+      startAtLogin = loginItem.state != .off
+      loginItemMessage = "Could not update Start at login: \(error.localizedDescription)"
+    }
+    settings.set(true, forKey: "loginItemConfigured")
+  }
+  func openLoginItemSettings() { loginItem?.openSettings() }
+  private func refreshLoginItem() {
+    guard let loginItem else { return }
+    startAtLogin = loginItem.state != .off
+    loginItemMessage = loginItem.state == .needsApproval
+      ? "Allow LidGlow in System Settings → Login Items to start automatically." : nil
   }
   func completeWelcome(startLighting: Bool) {
     showWelcome = false
@@ -356,8 +399,8 @@ final class AppModel: ObservableObject {
       if let raw = query["brightness"], let value = Double(raw), value.isFinite {
         brightness = min(1, max(0, value))
       }
-    case "off": setLogoPower(false)
-    case "on": setLogoPower(true)
+    case "off": setLidGlowEnabled(false)
+    case "on": setLidGlowEnabled(true)
     case "focus":
       if let raw = query["minutes"], let value = Double(raw), value.isFinite {
         focusMinutes = min(180, max(1, value))
@@ -635,6 +678,11 @@ final class AppModel: ObservableObject {
     if batteryLevel != nil { batteryLevel = nil }
   }
   private func observeLifecycle() {
+    observers.append(NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.refreshLoginItem() }
+    })
     for (name, reason, suspended) in [
       (NSWorkspace.screensDidSleepNotification, "display", true),
       (NSWorkspace.screensDidWakeNotification, "display", false),
@@ -761,7 +809,8 @@ final class AppModel: ObservableObject {
       "mode": mode.rawValue, "brightness": brightness, "speed": speed, "minimum": minimum,
       "enabled": enabled, "morseText": morseText, "customPattern": customPattern,
       "focusMinutes": focusMinutes, "dimOnLowPower": dimOnLowPower,
-      "controlsWanted": controlsWanted,
+      "controlsWanted": controlsWanted, "lidGlowEnabled": controlsWanted,
+      "breathingSpeedDefaultV2": true,
     ] as [String: Any] { defaults.set(value, forKey: key) }
     if let data = try? JSONEncoder().encode(agentPreferences) {
       defaults.set(data, forKey: "agentPreferences")
@@ -779,7 +828,10 @@ final class AppModel: ObservableObject {
       mode = value
     }
     brightness = number("brightness", fallback: 0.7, range: 0...1)
-    speed = number("speed", fallback: 1, range: 0.5...3)
+    speed = number("speed", fallback: 1.5, range: 0.5...3)
+    if speed == 1 && !defaults.bool(forKey: "breathingSpeedDefaultV2") {
+      speed = 1.5
+    }
     minimum = number("minimum", fallback: 0.06, range: 0...1)
     focusMinutes = number("focusMinutes", fallback: 25, range: 1...180)
     if defaults.object(forKey: "enabled") != nil { enabled = defaults.bool(forKey: "enabled") }
@@ -790,7 +842,11 @@ final class AppModel: ObservableObject {
     if defaults.object(forKey: "dimOnLowPower") != nil {
       dimOnLowPower = defaults.bool(forKey: "dimOnLowPower")
     }
-    controlsWanted = defaults.bool(forKey: "controlsWanted")
+    // The new switch controls LidGlow versus Mac automatic lighting.
+    // Adopt On once when migrating; later explicit Off choices are retained.
+    controlsWanted = defaults.object(forKey: "lidGlowEnabled") == nil
+      ? true : defaults.bool(forKey: "lidGlowEnabled")
+    if controlsWanted { enabled = true }
     if let data = defaults.data(forKey: "agentPreferences"), data.count <= 65536,
       let preferences = try? JSONDecoder().decode(AgentPreferences.self, from: data)
     {

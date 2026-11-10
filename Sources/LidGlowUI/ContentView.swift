@@ -12,6 +12,7 @@ extension Color {
 
 struct ContentView: View {
   @ObservedObject var model: AppModel
+  @Environment(\.openWindow) private var openWindow
   @ViewState(initialValue: Optional<IntegrationGuideSelection>.none) private var setupGuide:
     IntegrationGuideSelection?
   @ViewState(initialValue: "claude") private var rulesProvider: String
@@ -87,6 +88,18 @@ struct ContentView: View {
       .padding(12)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+      Button { openWindow(id: "about") } label: {
+        VStack(alignment: .leading, spacing: 5) {
+          Text("About LidGlow").font(.system(size: 10))
+          Text("HET PATEL")
+            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .tracking(2)
+        }
+        .foregroundStyle(Color.lidMuted.opacity(0.75))
+        .padding(.horizontal, 12)
+        .padding(.top, 16)
+      }
+      .buttonStyle(.plain)
     }
     .padding(.horizontal, 17)
     .padding(.top, 30)
@@ -139,26 +152,22 @@ struct ContentView: View {
       }
       Spacer(minLength: 16)
       VStack(alignment: .trailing, spacing: 8) {
-        smallHeading(model.hardwareAvailable ? "LOGO LIGHT" : "LIGHT PREVIEW")
-        if model.isRestoringHardware || model.needsLightingReset || usingMacLighting {
-          Text(lightingStateText)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Color.lidMuted)
-            .padding(.vertical, 3)
-        } else {
-          Toggle(model.enabled ? "On" : "Off", isOn: lightPower)
+        smallHeading("LIDGLOW")
+          Toggle(model.isLidGlowEnabled ? "On" : "Off", isOn: lightPower)
             .toggleStyle(.switch)
             .font(.system(size: 12, weight: .medium))
-            .accessibilityLabel(model.hardwareAvailable ? "Logo light" : "Preview light")
-            .accessibilityValue(model.enabled ? "On" : "Off")
-        }
+            .accessibilityLabel("LidGlow")
+            .accessibilityValue(model.isLidGlowEnabled ? "On" : "Off")
+            .disabled(model.isRestoringHardware || model.needsLightingReset)
+        Text(model.isLidGlowEnabled ? "Your chosen effect" : "Mac automatic")
+          .font(.system(size: 10)).foregroundStyle(Color.lidMuted)
       }
       .padding(.top, 8)
     }
   }
 
   private var lightPower: Binding<Bool> {
-    Binding(get: { model.enabled }, set: { model.setLogoPower($0) })
+    Binding(get: { model.isLidGlowEnabled }, set: { model.setLidGlowEnabled($0) })
   }
 
   private var usingMacLighting: Bool { model.isUsingSystemLighting && model.hardwareAvailable }
@@ -198,14 +207,6 @@ struct ContentView: View {
         )
         .buttonStyle(QuietButtonStyle())
         .disabled(model.isRestoringHardware)
-      } else if usingMacLighting {
-        Button("Turn on") { model.setLogoPower(true) }
-          .buttonStyle(QuietButtonStyle())
-        Button("Turn off") { model.setLogoPower(false) }
-          .buttonStyle(QuietButtonStyle())
-      } else {
-        Button(model.enabled ? "Turn off" : "Turn on") { model.setLogoPower(!model.enabled) }
-          .buttonStyle(QuietButtonStyle())
       }
       Menu {
         Button("Use Mac’s automatic lighting", action: model.useSystemLighting)
@@ -240,7 +241,7 @@ struct ContentView: View {
       return "Try every mode in the preview. Your logo is not available right now."
     }
     if usingMacLighting {
-      return "Turn on LidGlow to use your chosen mode, or switch your logo off."
+      return "LidGlow is off. macOS handles your logo automatically."
     }
     return "Choose a mode and make it your own. Brightness responds to ambient light."
   }
@@ -823,7 +824,7 @@ struct ContentView: View {
         HStack(spacing: 10) {
           presetButton(
             "Quiet desk", symbol: "moon.stars", brightness: 0.25, speed: 0.65, minimum: 0.08)
-          presetButton("Everyday", symbol: "sun.haze", brightness: 0.6, speed: 1, minimum: 0.15)
+          presetButton("Everyday", symbol: "sun.haze", brightness: 0.6, speed: 1.5, minimum: 0.15)
           presetButton(
             "Make a statement", symbol: "sparkles", brightness: 1, speed: 1.7, minimum: 0.04)
         }
@@ -857,7 +858,12 @@ struct ContentView: View {
   }
 
   private var preferences: some View {
+    VStack(alignment: .leading, spacing: 10) {
     HStack(spacing: 15) {
+      Toggle("Start at login", isOn: Binding(
+        get: { model.startAtLogin }, set: { model.setStartAtLogin($0) }))
+        .toggleStyle(.checkbox)
+        .font(.system(size: 10))
       Toggle(isOn: $model.dimOnLowPower) {
         HStack(spacing: 7) {
           Image(systemName: "leaf").foregroundStyle(Color.lidMuted)
@@ -874,6 +880,13 @@ struct ContentView: View {
       }
       .buttonStyle(.link)
       .font(.system(size: 10))
+    }
+    if let message = model.loginItemMessage {
+      HStack {
+        Text(message).font(.system(size: 10)).fixedSize(horizontal: false, vertical: true)
+        Button("Open Login Items", action: model.openLoginItemSettings).buttonStyle(.link)
+      }
+    }
     }
     .foregroundStyle(Color.lidMuted)
     .padding(.horizontal, 2)
@@ -1134,24 +1147,16 @@ struct MenuBarView: View {
           .foregroundStyle(Color.lidAmber)
         Text("LidGlow").font(.system(size: 15, weight: .semibold, design: .rounded))
         Spacer()
-        if model.isRestoringHardware || model.needsLightingReset || usingMacLighting {
-          Text(
-            model.isRestoringHardware
-              ? "Restoring…" : (model.needsLightingReset ? "Reset needed" : "Mac lighting")
-          )
-          .font(.system(size: 10, weight: .medium))
-          .foregroundStyle(Color.lidMuted)
-        } else {
           Toggle(
-            model.enabled ? "On" : "Off",
-            isOn: Binding(get: { model.enabled }, set: { model.setLogoPower($0) })
+            model.isLidGlowEnabled ? "On" : "Off",
+            isOn: Binding(get: { model.isLidGlowEnabled }, set: { model.setLidGlowEnabled($0) })
           )
           .toggleStyle(.switch)
           .controlSize(.mini)
           .font(.system(size: 10))
-          .accessibilityLabel(model.hardwareAvailable ? "Logo light" : "Preview light")
-          .accessibilityValue(model.enabled ? "On" : "Off")
-        }
+          .accessibilityLabel("LidGlow")
+          .accessibilityValue(model.isLidGlowEnabled ? "On" : "Off")
+          .disabled(model.isRestoringHardware || model.needsLightingReset)
       }
       HStack(alignment: .center, spacing: 14) {
         MenuLogo(preview: model.preview)
@@ -1190,14 +1195,6 @@ struct MenuBarView: View {
           )
           .buttonStyle(QuietButtonStyle())
           .disabled(model.isRestoringHardware)
-        } else if usingMacLighting {
-          Button("Turn on") { model.setLogoPower(true) }
-            .buttonStyle(QuietButtonStyle())
-          Button("Turn off") { model.setLogoPower(false) }
-            .buttonStyle(QuietButtonStyle())
-        } else {
-          Button(model.enabled ? "Turn off" : "Turn on") { model.setLogoPower(!model.enabled) }
-            .buttonStyle(QuietButtonStyle())
         }
         Spacer()
         Menu {
@@ -1222,6 +1219,7 @@ struct MenuBarView: View {
         }
         .buttonStyle(.plain)
         Spacer()
+        Button("About") { openWindow(id: "about") }.buttonStyle(.plain)
         Button("Quit") { NSApplication.shared.terminate(nil) }
           .buttonStyle(.plain)
           .foregroundStyle(Color.lidMuted)

@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 public struct LidGlowApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @StateObject private var model = AppModel()
+  @Environment(\.openWindow) private var openWindow
 
   public init() {}
 
@@ -45,9 +46,12 @@ public struct LidGlowApp: App {
     .defaultSize(width: 1040, height: 760)
     .windowResizability(.contentMinSize)
     .commands {
+      CommandGroup(replacing: .appInfo) {
+        Button("About LidGlow") { openWindow(id: "about") }
+      }
       CommandGroup(replacing: .newItem) {}
       CommandMenu("Light") {
-        Toggle("Logo light", isOn: Binding(get: { model.enabled }, set: { model.setLogoPower($0) }))
+        Toggle("LidGlow", isOn: Binding(get: { model.isLidGlowEnabled }, set: { model.setLidGlowEnabled($0) }))
           .keyboardShortcut("l", modifiers: [.command, .shift])
         ForEach(LightMode.allCases) { mode in
           Button(mode.title) { model.mode = mode }
@@ -57,6 +61,11 @@ public struct LidGlowApp: App {
       }
     }
     .defaultLaunchBehavior(.presented)
+    Window("About LidGlow", id: "about") {
+      AboutView().preferredColorScheme(.dark)
+    }
+    .windowResizability(.contentSize)
+    .defaultLaunchBehavior(.suppressed)
     MenuBarExtra {
       MenuBarView(model: model)
         .preferredColorScheme(.dark)

@@ -2,7 +2,7 @@
 
 A native macOS menu bar app that turns the illuminated Apple logo into a customizable light and a status signal for Claude Code and Codex. MIT licensed.
 
-**Experimental alpha.** Logo control uses private CoreBrightness interfaces on MacBook Pro with PROLED XDR Display. macOS updates can change those interfaces. The welcome offers a preview or an explicit choice to start lighting; later launches remember your choice.
+**Experimental alpha.** Logo control uses private CoreBrightness interfaces on MacBook Pro with PROLED XDR Display. macOS updates can change those interfaces. LidGlow starts On by default; switch it Off to return control to macOS.
 
 ## What it does
 
@@ -29,9 +29,11 @@ open dist/LidGlow.app
 
 The build script creates an ad-hoc signed development app, including its native signal helper and license notices. It does not notarize a public release. Use a toolchain with the macOS 15+ SDK; actual hardware access requires a compatible PROLED Mac and supported private interfaces. See [QA.md](QA.md) for the specific tested environment and remaining checks.
 
-The first-run welcome offers **Get started** or **Explore preview**. Use **Turn on**, **Turn off**, or the On/Off switch to control the light. **Lighting options → Use Mac’s automatic lighting** restores macOS behavior. Close the window to keep the menu bar app running; click its icon to reopen it. Normal Quit restores Mac lighting and verifies the result with a bounded grace period. Command-Shift-L toggles the light.
+The top **LidGlow** switch is the main control: **On** plays your chosen effect; **Off** returns to Mac automatic lighting. It starts On without a setup sheet. Breathing starts at **1.5×** speed, and the Everyday preset uses the same speed. An old default breathing speed of 1× migrates once to 1.5×; customized speeds are retained. Close the window to keep the menu bar app running; click its icon to reopen it. Normal Quit restores Mac lighting and verifies the result with a bounded grace period. Command-Shift-L toggles LidGlow.
 
-The app remembers an explicit lighting choice and resumes it on normal relaunch. A pending recovery record blocks automatic acquisition and offers **Reset lighting** instead. Preview mode never controls hardware.
+Version 0.1.1 adopts the simpler switch with an initial On setting. Later explicit Off choices are remembered. A pending recovery record blocks automatic acquisition and offers **Reset lighting** instead. Preview mode never controls hardware.
+
+**Start at login** is enabled on the first normal launch using Apple's Service Management API. Turn it off in the footer or macOS Login Items. macOS can require approval; the app shows that requirement and a link to Login Items. Subsequent launches respect system-level opt-outs. No login item is registered by preview mode or automated tests. **About LidGlow**, available in the sidebar footer and app menu, credits **Het Patel**.
 
 ## Connect your agents
 

@@ -7,7 +7,7 @@ This is an experimental alpha, validated on 10 November 2026 with an Apple M5 Pr
 | Suite | Result | Scope |
 | --- | --- | --- |
 | Core runner | 58 cases, 52,855 assertions, zero failures | Effects, scheduling, event ingestion, hardware state machine, ownership/recovery, filesystem notifications, subprocess bounds, concurrent signal rules |
-| Production app model | 9 cases, 77 assertions, zero failures | Saved-settings startup, repeated assignments, bounded Unicode input, corrupt preferences, focus lifecycle, power intent, persistence, concurrent signals, URLs, shutdown |
+| Production app model | 11 cases, 92 assertions, zero failures | Saved-settings startup, repeated assignments, bounded Unicode input, corrupt preferences, focus lifecycle, power intent, persistence, concurrent signals, URLs, shutdown, simplified switch/default migration, login registration/opt-out/approval/errors |
 | Python management and native writer | 36 cases, zero failures | Isolated hook installation/removal/status, native/Python parity, lifecycle mapping, input/file/lock failure cases |
 
 The exact commands are in [README.md](README.md#check-the-source). No check uses physical hardware or real agent configuration. The app-model runner imports the production UI module with hardware and runtime services disabled; it does not duplicate the model implementation.
@@ -26,6 +26,8 @@ Meaningful failure cases include:
 - Fake-daemon rejected or ignored commands, lost readback, stalled fades, rapid reversal, keyboard correction failure, sleep during a fade, 50 sleep/wake cycles, wake readiness/release races, crash recovery, ownership contention, and restoration verification. A stable target makes zero backend calls over 10,000 repeated requests/advances.
 
 ## Native interface checks
+
+Version 0.1.1 adds a 1.5× initial breathing speed, one LidGlow switch (Off returns to Mac automatic), initial On behavior, an About window crediting Het Patel, and default Start at login. New headless checks cover the default migration, retained custom speeds and later Off choices, one-time login registration, external opt-out, pending approval, and registration failure using a fake service. Actual reboot/login execution has not been tested; macOS approval remains authoritative.
 
 The app was exercised using an isolated app-data directory and fake Claude/Codex settings homes. The production native event writer was used for synthetic activity; no prompts, private code, or real agent settings were used.
 
