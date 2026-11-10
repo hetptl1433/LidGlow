@@ -46,7 +46,11 @@ public enum ProcessRunner {
     }
     process.executableURL = executable
     process.arguments = arguments
-    process.environment = environment
+    // Foundation's nil/default environment can use an older launch snapshot.
+    // Capture the app's current environment explicitly so Launch Services and
+    // runtime-supplied helper paths reach the child. An explicit caller-provided
+    // environment, including an empty one, remains authoritative.
+    process.environment = environment ?? ProcessInfo.processInfo.environment
     process.standardInput = FileHandle.nullDevice
     process.standardOutput = pipe
     process.standardError = pipe

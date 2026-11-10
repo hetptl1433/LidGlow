@@ -6,6 +6,7 @@ final class ProcessRunnerChecks {
   static func runAll() {
     let suite = ProcessRunnerChecks()
     Check.run("Process runner captures JSON and preserves nonzero exit", suite.successAndNonzero)
+    Check.run("Process runner forwards the current environment and respects explicit overrides", suite.environmentInheritance)
     Check.run("Process runner caps output without unbounded allocation", suite.outputCap)
     Check.run("Process runner bounds a silent hang and reaps its child", suite.silentHang)
     Check.run("Process runner escalates ignored TERM to KILL", suite.ignoredTerm)
@@ -41,6 +42,36 @@ final class ProcessRunnerChecks {
     Check.equal(failure.status, 7)
     Check.equal(String(data: failure.output, encoding: .utf8), "expected failure")
     Check.isTrue(failure.error == nil)
+  }
+  func environmentInheritance() {
+    // Prime Foundation before changing the parent. Launch Services may supply
+    // app-only environment values after the process's original launch snapshot.
+    // A unique sentinel exercises that propagation without reading or replacing
+    // a personal path or relying on a shell/Python startup configuration.
+    _ = ProcessInfo.processInfo.environment
+    let key = "LIDGLOW_RUNNER_CHECK_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+    let value = "late-parent-" + UUID().uuidString
+    Check.equal(setenv(key, value, 1), 0)
+    defer { unsetenv(key) }
+    Check.equal(ProcessInfo.processInfo.environment[key], value)
+
+    let inherited = ProcessRunner.run(
+      executable: URL(fileURLWithPath: "/usr/bin/printenv"), arguments: [key], maxOutputBytes: 256)
+    Check.equal(inherited.status, 0)
+    Check.equal(String(data: inherited.output, encoding: .utf8), value + "\n")
+    Check.isTrue(!inherited.timedOut && inherited.error == nil)
+
+    let explicit = ProcessRunner.run(
+      executable: URL(fileURLWithPath: "/usr/bin/printenv"), arguments: [key],
+      environment: [key: "explicit-value"], maxOutputBytes: 256)
+    Check.equal(explicit.status, 0)
+    Check.equal(String(data: explicit.output, encoding: .utf8), "explicit-value\n")
+
+    let empty = ProcessRunner.run(
+      executable: URL(fileURLWithPath: "/usr/bin/printenv"), arguments: [key],
+      environment: [:], maxOutputBytes: 256)
+    Check.equal(empty.status, 1)
+    Check.equal(empty.output.count, 0)
   }
   func outputCap() {
     let result = run("import sys; sys.stdout.write('a'*200000)")
