@@ -1,0 +1,87 @@
+name: Notarized LidGlow release
+
+# Manual releases only. Credentials are never available in PR workflows.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout trusted release source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Confirm signing and notarization credentials exist
+        env:
+          CERT: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          PASSWORD: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+          KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+        run: |
+          for name in CERT PASSWORD KEY KEY_ID ISSUER_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Apple release signing/notarization credentials are not configured."
+              exit 1
+            fi
+          done
+
+      - name: Import Developer ID certificate and private key
+        id: certificates
+        uses: Apple-Actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          p12-password: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+
+      - name: Build LidGlow
+        run: ./scripts/build.sh "$RUNNER_TEMP/lidglow-release"
+
+      - name: Sign and verify with Developer ID and hardened runtime
+        env:
+          IDENTITIES: ${{ steps.certificates.outputs.identities }}
+        run: |
+          identity="$(jq -r '[.[] | select(.name | startswith("Developer ID Application:"))] | if length == 1 then .[0].hash else empty end' <<< "$IDENTITIES")"
+          if [[ -z "$identity" ]]; then
+            echo "::error::Expected exactly one Developer ID Application certificate with its private key in the imported P12."
+            exit 1
+          fi
+          zsh scripts/sign-release.sh "$RUNNER_TEMP/lidglow-release/LidGlow.app" "$identity"
+
+      - name: Package signed app as DMG
+        id: dmg
+        run: |
+          zsh scripts/package-dmg.sh "$RUNNER_TEMP/lidglow-release/LidGlow.app"
+          dmg_path="$(find "$PWD/dist" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$dmg_path"
+          echo "path=$dmg_path" >> "$GITHUB_OUTPUT"
+
+      - name: Notarize and staple Apple ticket
+        uses: Apple-Actions/notarize@v1
+        with:
+          path: ${{ steps.dmg.outputs.path }}
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+      - name: Verify stapled ticket
+        env:
+          DMG: ${{ steps.dmg.outputs.path }}
+        run: |
+          xcrun stapler validate "$DMG"
+          hdiutil verify "$DMG"
+          shasum -a 256 "$DMG"
+
+      - name: Upload verified notarized DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: LidGlow-Notarized-DMG
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 30

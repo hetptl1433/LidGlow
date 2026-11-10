@@ -1,0 +1,39 @@
+name: Build LidGlow DMG
+
+on:
+  push:
+    branches:
+      - dmg-packaging
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build ad-hoc signed native app
+        run: |
+          swift --version
+          uname -m
+          ./scripts/build.sh "$RUNNER_TEMP/lidglow-dist"
+
+      - name: Create and verify drag-to-Applications DMG
+        run: |
+          zsh scripts/package-dmg.sh "$RUNNER_TEMP/lidglow-dist/LidGlow.app"
+          ls -lh dist/*.dmg
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: LidGlow-DMG
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 30
